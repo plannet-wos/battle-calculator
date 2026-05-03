@@ -104,6 +104,50 @@ export function defaultTroopLevels(): TroopLevels {
   };
 }
 
+/** Canonical gear-piece order. Must match the scan service's PIECES constant. */
+export const GEAR_PIECES: ReadonlyArray<DetectedGearItem['piece']> =
+  ['head', 'gloves', 'belt', 'shoes'] as const;
+
+/** Empty default: each troop type owns exactly one of every gear piece, all unset. */
+export function defaultGearScanResult(): GearScanResult {
+  const blank = (type: HeroType): DetectedGearItem[] =>
+    GEAR_PIECES.map(piece => ({
+      type,
+      color: 'unknown',
+      piece,
+      bonusLevel: 0,
+      masteryLevel: 0,
+    }));
+  return {
+    infantry: blank('Infantry'),
+    lancer:   blank('Lancer'),
+    marksman: blank('Marksman'),
+  };
+}
+
+/**
+ * Normalize a (possibly partial) gear-scan result so each troop type contains
+ * exactly one entry per gear piece. Pieces missing from the scan are filled
+ * with empty defaults; entries with `piece === 'unknown'` are dropped.
+ */
+export function normalizeGearScanResult(scan: GearScanResult): GearScanResult {
+  const fillType = (type: HeroType, scanned: DetectedGearItem[]): DetectedGearItem[] => {
+    const byPiece = new Map<DetectedGearItem['piece'], DetectedGearItem>();
+    for (const item of scanned) {
+      if (item.piece === 'unknown') continue;
+      if (!byPiece.has(item.piece)) byPiece.set(item.piece, item);
+    }
+    return GEAR_PIECES.map(piece =>
+      byPiece.get(piece) ?? { type, color: 'unknown', piece, bonusLevel: 0, masteryLevel: 0 },
+    );
+  };
+  return {
+    infantry: fillType('Infantry', scan.infantry),
+    lancer:   fillType('Lancer',   scan.lancer),
+    marksman: fillType('Marksman', scan.marksman),
+  };
+}
+
 export interface StrengthPreset {
   label: 'Yourself' | 'Low' | 'Medium' | 'Strong';
   stats: AccountStats;

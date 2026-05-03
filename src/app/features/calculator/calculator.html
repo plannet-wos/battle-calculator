@@ -19,7 +19,7 @@
       <mat-card-content class="scan-content">
 
         <div class="scan-instructions">
-          In-game: go to <strong>Backpack → Gear</strong>then take a full-screen screenshot.
+          Either upload a backpack screenshot (in-game: <strong>Backpack → Gear</strong>, full-screen) and click <strong>Scan Gear</strong>, or skip the scan and click the <strong>edit</strong> icon on each gear row below to enter values manually.
         </div>
 
         <div class="scan-fields">
@@ -49,97 +49,88 @@
           }
         </div>
 
-        <!-- Detected gear items table -->
-        @if (gearScanResult(); as scanRes) {
-          <div class="gear-items-result">
-            @for (typeKey of ['infantry', 'lancer', 'marksman']; track typeKey) {
-              @let items = typeKey === 'infantry' ? scanRes.infantry : typeKey === 'lancer' ? scanRes.lancer : scanRes.marksman;
-              @if (items.length > 0) {
-                <div class="gear-type-group">
-                  <div class="gear-type-heading">
-                    {{ typeKey === 'infantry' ? '🛡️ Infantry' : typeKey === 'lancer' ? '⚔️ Lancer' : '🎯 Marksman' }}
-                  </div>
-                  <table class="gear-items-table">
-                    <thead>
-                      <tr>
-                        <th>Piece</th>
-                        <th>Color</th>
-                        <th>+Level</th>
-                        <th>Mastery</th>
-                        <th class="edit-col"></th>
+        <!-- Detected gear items table — each troop type always shows its 4 fixed
+             piece slots (head, gloves, belt, shoes). Edit any row to fill in
+             values manually if no scan was run. -->
+        @let gearRes = gearScanResult();
+        <div class="gear-items-result">
+          @for (typeKey of ['infantry', 'lancer', 'marksman']; track typeKey) {
+            @let items = typeKey === 'infantry' ? gearRes.infantry : typeKey === 'lancer' ? gearRes.lancer : gearRes.marksman;
+            <div class="gear-type-group">
+              <div class="gear-type-heading">
+                <span>{{ typeKey === 'infantry' ? '🛡️ Infantry' : typeKey === 'lancer' ? '⚔️ Lancer' : '🎯 Marksman' }}</span>
+              </div>
+              <table class="gear-items-table">
+                <thead>
+                  <tr>
+                    <th>Piece</th>
+                    <th>Color</th>
+                    <th>+Level</th>
+                    <th>Mastery</th>
+                    <th class="edit-col"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (item of items; track $index) {
+                    @let troopKey = $any(typeKey);
+                    @if (isEditingRow(troopKey, $index) && editDraft(); as draft) {
+                      <tr class="editing-row">
+                        <td class="piece-cell">{{ draft.piece }}</td>
+                        <td>
+                          <select class="edit-input"
+                                  [value]="draft.color"
+                                  (change)="updateDraftField('color', $any($event.target).value)">
+                            @for (c of gearColorOptions; track c) {
+                              <option [value]="c">{{ c }}</option>
+                            }
+                          </select>
+                        </td>
+                        <td>
+                          <input type="number" min="0" class="edit-input num"
+                                 [value]="draft.bonusLevel"
+                                 (input)="updateDraftField('bonusLevel', +$any($event.target).value || 0)" />
+                        </td>
+                        <td>
+                          <input type="number" min="0" class="edit-input num"
+                                 [value]="draft.masteryLevel"
+                                 (input)="updateDraftField('masteryLevel', +$any($event.target).value || 0)" />
+                        </td>
+                        <td class="edit-col">
+                          <button mat-icon-button class="row-edit-btn"
+                                  matTooltip="Save"
+                                  (click)="saveEditGearItem()">
+                            <mat-icon>check</mat-icon>
+                          </button>
+                          <button mat-icon-button class="row-edit-btn"
+                                  matTooltip="Cancel"
+                                  (click)="cancelEditGearItem()">
+                            <mat-icon>close</mat-icon>
+                          </button>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      @for (item of items; track $index) {
-                        @let troopKey = $any(typeKey);
-                        @if (isEditingRow(troopKey, $index) && editDraft(); as draft) {
-                          <tr class="editing-row">
-                            <td>
-                              <select class="edit-input"
-                                      [value]="draft.piece"
-                                      (change)="updateDraftField('piece', $any($event.target).value)">
-                                @for (p of gearPieceOptions; track p) {
-                                  <option [value]="p">{{ p }}</option>
-                                }
-                              </select>
-                            </td>
-                            <td>
-                              <select class="edit-input"
-                                      [value]="draft.color"
-                                      (change)="updateDraftField('color', $any($event.target).value)">
-                                @for (c of gearColorOptions; track c) {
-                                  <option [value]="c">{{ c }}</option>
-                                }
-                              </select>
-                            </td>
-                            <td>
-                              <input type="number" min="0" class="edit-input num"
-                                     [value]="draft.bonusLevel"
-                                     (input)="updateDraftField('bonusLevel', +$any($event.target).value || 0)" />
-                            </td>
-                            <td>
-                              <input type="number" min="0" class="edit-input num"
-                                     [value]="draft.masteryLevel"
-                                     (input)="updateDraftField('masteryLevel', +$any($event.target).value || 0)" />
-                            </td>
-                            <td class="edit-col">
-                              <button mat-icon-button class="row-edit-btn"
-                                      matTooltip="Save"
-                                      (click)="saveEditGearItem()">
-                                <mat-icon>check</mat-icon>
-                              </button>
-                              <button mat-icon-button class="row-edit-btn"
-                                      matTooltip="Cancel"
-                                      (click)="cancelEditGearItem()">
-                                <mat-icon>close</mat-icon>
-                              </button>
-                            </td>
-                          </tr>
-                        } @else {
-                          <tr>
-                            <td class="piece-cell">{{ item.piece }}</td>
-                            <td>
-                              <span class="color-dot" [class]="item.color">{{ item.color }}</span>
-                            </td>
-                            <td class="num-cell">+{{ item.bonusLevel }}</td>
-                            <td class="num-cell">Lv.{{ item.masteryLevel }}</td>
-                            <td class="edit-col">
-                              <button mat-icon-button class="row-edit-btn"
-                                      matTooltip="Edit"
-                                      (click)="startEditGearItem(troopKey, $index)">
-                                <mat-icon>edit</mat-icon>
-                              </button>
-                            </td>
-                          </tr>
-                        }
-                      }
-                    </tbody>
-                  </table>
-                </div>
-              }
-            }
-          </div>
-        }
+                    } @else {
+                      <tr>
+                        <td class="piece-cell">{{ item.piece }}</td>
+                        <td>
+                          <span class="color-dot" [class]="item.color">{{ item.color }}</span>
+                        </td>
+                        <td class="num-cell">+{{ item.bonusLevel }}</td>
+                        <td class="num-cell">Lv.{{ item.masteryLevel }}</td>
+                        <td class="edit-col">
+                          <button mat-icon-button class="row-edit-btn"
+                                  matTooltip="Edit"
+                                  (click)="startEditGearItem(troopKey, $index)">
+                            <mat-icon>edit</mat-icon>
+                          </button>
+                        </td>
+                      </tr>
+                    }
+                  }
+                </tbody>
+              </table>
+            </div>
+          }
+        </div>
 
       </mat-card-content>
     }
@@ -156,8 +147,7 @@
       <mat-card-content class="scan-content">
 
         <div class="scan-instructions">
-          In-game: Attack any target with NO HEROES. Open <strong>Mail</strong>, find the report, scroll all the way down, and take a full-screen screenshot showing the <strong>Stat Bonuses</strong> table.
-          The scanner reads your own stats (the LEFT column).
+          Either upload a battle-report screenshot (in-game: attack any target with NO HEROES, open <strong>Mail</strong>, scroll down, full-screen screenshot of the <strong>Stat Bonuses</strong> table — left column is your stats) and click <strong>Scan Stats</strong>, or skip the scan and click the <strong>edit</strong> icon below to enter values manually.
         </div>
 
         <div class="scan-fields">
@@ -187,11 +177,11 @@
           }
         </div>
 
-        <!-- Detected stats + troop levels -->
-        @if (statsScanResult(); as scan) {
-          @let edit = editingStats();
-          @let draft = statsDraft();
-          @let tDraft = troopsDraft();
+        <!-- Stats + troop levels — always rendered so users can edit before scanning. -->
+        @let scan = statsScanResult();
+        @let edit = editingStats();
+        @let draft = statsDraft();
+        @let tDraft = troopsDraft();
           <div class="stats-result">
             <div class="stats-header-row">
               @if (!edit) {
@@ -289,7 +279,6 @@
               </tbody>
             </table>
           </div>
-        }
 
       </mat-card-content>
     }
@@ -306,7 +295,7 @@
       <mat-card-content class="scan-content">
 
         <div class="scan-instructions">
-          In-game: Go to your <strong>Heroes</strong>, sort by <strong>quality</strong> and take a screenshot. Make sure all your main SSR hereoes are in view.
+          Either upload a heroes screenshot (in-game: go to <strong>Heroes</strong>, sort by <strong>quality</strong>, take a screenshot with all main SSR heroes in view) and click <strong>Scan Stars</strong>, or skip the scan and tick the boxes below to enter heroes manually.
         </div>
 
         <div class="scan-fields">

@@ -19,11 +19,10 @@ import { SimulatorService, SimComparison, addAccountStats, gearItemsToStatBonus,
 import { HeroScanService } from '../../core/services/hero-scan.service';
 import { GearScanService } from '../../core/services/gear-scan.service';
 import { StatsScanService } from '../../core/services/stats-scan.service';
-import { HeroInput, LineupResult, GearScanResult, AccountStats, DetectedGearItem, UnitStatBonus, BattleReportScan, TroopLevels } from '../../core/models/hero.model';
+import { HeroInput, LineupResult, GearScanResult, AccountStats, DetectedGearItem, UnitStatBonus, BattleReportScan, TroopLevels, defaultTroopLevels, defaultGearScanResult, normalizeGearScanResult } from '../../core/models/hero.model';
 import { TutorialDialog } from './tutorial-dialog';
 
 type GearTroopKey = 'infantry' | 'lancer' | 'marksman';
-type GearPiece = DetectedGearItem['piece'];
 type GearColor = DetectedGearItem['color'];
 
 @Component({
@@ -67,22 +66,26 @@ export class Calculator {
   readonly scanFile = signal<File | null>(null);
   readonly scanStatus = signal<'idle' | 'scanning' | 'done' | 'error'>('idle');
   readonly scanMessage = signal('');
-  readonly scanExpanded = signal(false);
+  readonly scanExpanded = signal(true);
 
-  // Gear scan
+  // Gear scan. Each troop type always has exactly 4 fixed rows (head, gloves,
+  // belt, shoes) so the user can edit every slot manually without needing an
+  // "add item" affordance. `gearDataReady` flips to true on first scan/edit
+  // and gates the simulator.
   readonly gearScanFile = signal<File | null>(null);
   readonly gearScanStatus = signal<'idle' | 'scanning' | 'done' | 'error'>('idle');
   readonly gearScanMessage = signal('');
-  readonly gearScanExpanded = signal(false);
-  readonly gearScanResult = signal<GearScanResult | null>(null);
+  readonly gearScanExpanded = signal(true);
+  readonly gearScanResult = signal<GearScanResult>(defaultGearScanResult());
+  readonly gearDataReady = signal(false);
 
   // Inline-edit state for the gear scan results table. When the user clicks
   // the pencil icon on a row we copy the item into `editDraft` and the row
   // renders inputs/selects bound to that draft. Save commits the draft back
-  // into `gearScanResult`; cancel just clears the editing pointer.
+  // into `gearScanResult`; cancel just clears the editing pointer. Piece is
+  // fixed (one slot per type), so only color/bonus/mastery are editable.
   readonly editingGear = signal<{ troop: GearTroopKey; index: number } | null>(null);
   readonly editDraft = signal<DetectedGearItem | null>(null);
-  readonly gearPieceOptions: GearPiece[] = ['head', 'gloves', 'belt', 'shoes'];
   readonly gearColorOptions: GearColor[] = ['red', 'orange', 'unknown'];
 
   // Inline-edit state for the stats scan table — covers BOTH the stat-bonus
@@ -93,11 +96,17 @@ export class Calculator {
 
   // Stats scan (battle report) — holds both the per-type stat bonuses and the
   // per-type troop tier/FC. Either half can be edited via the same toggle.
+  // Result starts with zeroed stats + default T10/FC5 troops so the table is
+  // visible before any scan. `statsDataReady` flips to true on first scan/edit.
   readonly statsScanFile = signal<File | null>(null);
   readonly statsScanStatus = signal<'idle' | 'scanning' | 'done' | 'error'>('idle');
   readonly statsScanMessage = signal('');
-  readonly statsScanExpanded = signal(false);
-  readonly statsScanResult = signal<BattleReportScan | null>(null);
+  readonly statsScanExpanded = signal(true);
+  readonly statsScanResult = signal<BattleReportScan>({
+    stats: zeroAccountStats(),
+    troops: defaultTroopLevels(),
+  });
+  readonly statsDataReady = signal(false);
 
   /**
    * The total account-stat bonuses (%) that will be fed into the simulator.
@@ -112,7 +121,7 @@ export class Calculator {
     const scanned        = this.statsScanResult();
     const gearResult     = this.gearScanResult();
     const baseHeroResult = this.result()?.squad;
-    if (!baseHeroResult || !scanned || !gearResult) return zeroAccountStats();
+    if (!baseHeroResult || !this.statsDataReady() || !this.gearDataReady()) return zeroAccountStats();
     return addAccountStats(scanned.stats, gearItemsToStatBonus(gearResult), baseHeroToStatsBonus(baseHeroResult));
   });
 
@@ -184,6 +193,7 @@ export class Calculator {
     try {
       const scan = await this.statsScanService.scan(file);
       this.statsScanResult.set(scan);
+      this.statsDataReady.set(true);
       this.statsScanStatus.set('done');
       const t = scan.troops;
       this.statsScanMessage.set(
@@ -206,13 +216,19 @@ export class Calculator {
     this.gearScanStatus.set('scanning');
     this.gearScanMessage.set('');
     try {
-      const result = await this.gearScanService.scan(file);
+      const raw = await this.gearScanService.scan(file);
+      // Normalize so each troop has all 4 piece slots — missing pieces become
+      // empty rows the user can fill in manually.
+      const result = normalizeGearScanResult(raw);
       this.gearScanResult.set(result);
-      const total = result.infantry.length + result.lancer.length + result.marksman.length;
+      this.gearDataReady.set(true);
+      const detected = (items: DetectedGearItem[]) =>
+        items.filter(i => i.color !== 'unknown' || i.bonusLevel > 0 || i.masteryLevel > 0).length;
+      const total = detected(raw.infantry) + detected(raw.lancer) + detected(raw.marksman);
       this.gearScanStatus.set('done');
       this.gearScanMessage.set(
-        `Found ${total} items — Infantry: ${result.infantry.length}, ` +
-        `Lancer: ${result.lancer.length}, Marksman: ${result.marksman.length}`
+        `Found ${total} items — Infantry: ${detected(raw.infantry)}, ` +
+        `Lancer: ${detected(raw.lancer)}, Marksman: ${detected(raw.marksman)}. Edit empty rows if needed.`
       );
     } catch (e) {
       this.gearScanStatus.set('error');
@@ -239,7 +255,6 @@ export class Calculator {
     const draft = this.editDraft();
     if (!target || !draft) return;
     const res = this.gearScanResult();
-    if (!res) return;
     const next: GearScanResult = {
       infantry: [...res.infantry],
       lancer:   [...res.lancer],
@@ -247,6 +262,7 @@ export class Calculator {
     };
     next[target.troop][target.index] = { ...draft };
     this.gearScanResult.set(next);
+    this.gearDataReady.set(true);
     // Edits invalidate any cached simulation that depended on prior values.
     this.simResult.set(null);
     this.cancelEditGearItem();
@@ -265,7 +281,6 @@ export class Calculator {
 
   startEditStats() {
     const res = this.statsScanResult();
-    if (!res) return;
     this.statsDraft.set({
       inf:  { ...res.stats.inf },
       lanc: { ...res.stats.lanc },
@@ -301,6 +316,7 @@ export class Calculator {
         mark: { ...troops.mark },
       },
     });
+    this.statsDataReady.set(true);
     // Edits invalidate any cached simulation that depended on prior values.
     this.simResult.set(null);
     this.cancelEditStats();
@@ -335,12 +351,12 @@ export class Calculator {
   calculate() {
     const res = this.calcService.calculate(this.heroInputs());
     if (res) {
-      // If all three data sources are available, compute the recommended
+      // If all three data sources are ready, compute the recommended
       // ratio via the tournament simulator. Otherwise leave it blank so the
-      // UI can prompt the user to scan gear + battle-report stats first.
-      const scanned        = this.statsScanResult();
-      const gearResult     = this.gearScanResult();
-      if (scanned && gearResult && res.squad.length > 0) {
+      // UI can prompt the user to scan or enter gear + battle-report stats.
+      const scanned    = this.statsScanResult();
+      const gearResult = this.gearScanResult();
+      if (this.statsDataReady() && this.gearDataReady() && res.squad.length > 0) {
         const attStats = addAccountStats(
           scanned.stats,
           gearItemsToStatBonus(gearResult),
@@ -355,7 +371,7 @@ export class Calculator {
         );
       } else {
         res.ratio = '—';
-        res.strategy = 'Scan gear + battle report to get a recommended ratio';
+        res.strategy = 'Scan or enter gear + battle report stats to get a recommended ratio';
       }
       // Seed the editable player ratio with the recommendation. The user can
       // still override it in the UI before running the sim.
@@ -375,7 +391,7 @@ export class Calculator {
         const scanned = this.statsScanResult();
         const gearResult = this.gearScanResult();
         const baseHeroResult = this.result()?.squad;
-        if (scanned && gearResult && baseHeroResult) {
+        if (this.statsDataReady() && this.gearDataReady() && baseHeroResult) {
           const attStats = addAccountStats(
             scanned.stats,
             gearItemsToStatBonus(gearResult),
@@ -388,9 +404,8 @@ export class Calculator {
           );
           this.simResult.set(sim);
         } else {
-          // Simulation requires all three data sources: battle-report stats scan,
-          // gear backpack scan, and a calculated lineup. Prompt the user if any are missing.
-          console.warn('Simulation skipped: upload a battle-report screenshot, a gear backpack screenshot, and calculate a lineup first.');
+          // Simulation requires all three data sources to be ready: stats, gear, and a calculated lineup.
+          console.warn('Simulation skipped: provide gear and battle-report stats (scan or enter manually) and calculate a lineup first.');
         }
       } finally {
         this.simRunning.set(false);
@@ -402,8 +417,10 @@ export class Calculator {
     this.heroInputs.set(
       this.heroData.heroes.map(h => ({ name: h.name, owned: false, stars: 1, widget: 0 }))
     );
-    this.gearScanResult.set(null);
-    this.statsScanResult.set(null);
+    this.gearScanResult.set(defaultGearScanResult());
+    this.gearDataReady.set(false);
+    this.statsScanResult.set({ stats: zeroAccountStats(), troops: defaultTroopLevels() });
+    this.statsDataReady.set(false);
     this.result.set(null);
     this.simResult.set(null);
   }
