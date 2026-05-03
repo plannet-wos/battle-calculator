@@ -1,0 +1,565 @@
+<div class="calculator-wrapper">
+
+  <!-- Header -->
+  <div class="page-header">
+    <h1>⚔️ Solo Fight Calculator</h1>
+    <p class="subtitle">Select the heroes you own, set their stars & widget level, set your gear levels, and get your optimal battle lineup.
+      <a class="tutorial-link" (click)="openTutorial()">How does it work?</a>
+    </p>
+  </div>
+
+  <!-- Gear Scan Card -->
+  <mat-card class="scan-card">
+    <mat-card-header (click)="gearScanExpanded.set(!gearScanExpanded())" class="scan-header">
+      <mat-card-title>🪖 Scan Gear from Screenshot</mat-card-title>
+      <mat-icon class="scan-chevron">{{ gearScanExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+    </mat-card-header>
+
+    @if (gearScanExpanded()) {
+      <mat-card-content class="scan-content">
+
+        <div class="scan-instructions">
+          In-game: go to <strong>Backpack → Gear</strong>then take a full-screen screenshot.
+        </div>
+
+        <div class="scan-fields">
+          <div class="scan-field">
+            <label class="scan-label">Gear Screenshot</label>
+            <input type="file"
+                   accept="image/*"
+                   class="scan-file-input"
+                   (change)="onGearFileSelected($event)" />
+          </div>
+        </div>
+
+        <div class="scan-actions">
+          <button mat-flat-button color="primary"
+                  [disabled]="!gearScanFile() || gearScanStatus() === 'scanning'"
+                  (click)="scanGear()">
+            <mat-icon>image_search</mat-icon>
+            {{ gearScanStatus() === 'scanning' ? 'Scanning…' : 'Scan Gear' }}
+          </button>
+
+          @if (gearScanMessage()) {
+            <span class="scan-message"
+                  [class.scan-error]="gearScanStatus() === 'error'"
+                  [class.scan-ok]="gearScanStatus() === 'done'">
+              {{ gearScanMessage() }}
+            </span>
+          }
+        </div>
+
+        <!-- Detected gear items table -->
+        @if (gearScanResult(); as scanRes) {
+          <div class="gear-items-result">
+            @for (typeKey of ['infantry', 'lancer', 'marksman']; track typeKey) {
+              @let items = typeKey === 'infantry' ? scanRes.infantry : typeKey === 'lancer' ? scanRes.lancer : scanRes.marksman;
+              @if (items.length > 0) {
+                <div class="gear-type-group">
+                  <div class="gear-type-heading">
+                    {{ typeKey === 'infantry' ? '🛡️ Infantry' : typeKey === 'lancer' ? '⚔️ Lancer' : '🎯 Marksman' }}
+                  </div>
+                  <table class="gear-items-table">
+                    <thead>
+                      <tr>
+                        <th>Piece</th>
+                        <th>Color</th>
+                        <th>+Level</th>
+                        <th>Mastery</th>
+                        <th class="edit-col"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      @for (item of items; track $index) {
+                        @let troopKey = $any(typeKey);
+                        @if (isEditingRow(troopKey, $index) && editDraft(); as draft) {
+                          <tr class="editing-row">
+                            <td>
+                              <select class="edit-input"
+                                      [value]="draft.piece"
+                                      (change)="updateDraftField('piece', $any($event.target).value)">
+                                @for (p of gearPieceOptions; track p) {
+                                  <option [value]="p">{{ p }}</option>
+                                }
+                              </select>
+                            </td>
+                            <td>
+                              <select class="edit-input"
+                                      [value]="draft.color"
+                                      (change)="updateDraftField('color', $any($event.target).value)">
+                                @for (c of gearColorOptions; track c) {
+                                  <option [value]="c">{{ c }}</option>
+                                }
+                              </select>
+                            </td>
+                            <td>
+                              <input type="number" min="0" class="edit-input num"
+                                     [value]="draft.bonusLevel"
+                                     (input)="updateDraftField('bonusLevel', +$any($event.target).value || 0)" />
+                            </td>
+                            <td>
+                              <input type="number" min="0" class="edit-input num"
+                                     [value]="draft.masteryLevel"
+                                     (input)="updateDraftField('masteryLevel', +$any($event.target).value || 0)" />
+                            </td>
+                            <td class="edit-col">
+                              <button mat-icon-button class="row-edit-btn"
+                                      matTooltip="Save"
+                                      (click)="saveEditGearItem()">
+                                <mat-icon>check</mat-icon>
+                              </button>
+                              <button mat-icon-button class="row-edit-btn"
+                                      matTooltip="Cancel"
+                                      (click)="cancelEditGearItem()">
+                                <mat-icon>close</mat-icon>
+                              </button>
+                            </td>
+                          </tr>
+                        } @else {
+                          <tr>
+                            <td class="piece-cell">{{ item.piece }}</td>
+                            <td>
+                              <span class="color-dot" [class]="item.color">{{ item.color }}</span>
+                            </td>
+                            <td class="num-cell">+{{ item.bonusLevel }}</td>
+                            <td class="num-cell">Lv.{{ item.masteryLevel }}</td>
+                            <td class="edit-col">
+                              <button mat-icon-button class="row-edit-btn"
+                                      matTooltip="Edit"
+                                      (click)="startEditGearItem(troopKey, $index)">
+                                <mat-icon>edit</mat-icon>
+                              </button>
+                            </td>
+                          </tr>
+                        }
+                      }
+                    </tbody>
+                  </table>
+                </div>
+              }
+            }
+          </div>
+        }
+
+      </mat-card-content>
+    }
+  </mat-card>
+
+  <!-- Stats Scan Card (battle report) -->
+  <mat-card class="scan-card">
+    <mat-card-header (click)="statsScanExpanded.set(!statsScanExpanded())" class="scan-header">
+      <mat-card-title>📊 Scan Stats from Battle Report</mat-card-title>
+      <mat-icon class="scan-chevron">{{ statsScanExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+    </mat-card-header>
+
+    @if (statsScanExpanded()) {
+      <mat-card-content class="scan-content">
+
+        <div class="scan-instructions">
+          In-game: Attack any target with NO HEROES. Open <strong>Mail</strong>, find the report, scroll all the way down, and take a full-screen screenshot showing the <strong>Stat Bonuses</strong> table.
+          The scanner reads your own stats (the LEFT column).
+        </div>
+
+        <div class="scan-fields">
+          <div class="scan-field">
+            <label class="scan-label">Battle Report Screenshot</label>
+            <input type="file"
+                   accept="image/*"
+                   class="scan-file-input"
+                   (change)="onStatsFileSelected($event)" />
+          </div>
+        </div>
+
+        <div class="scan-actions">
+          <button mat-flat-button color="primary"
+                  [disabled]="!statsScanFile() || statsScanStatus() === 'scanning'"
+                  (click)="scanStats()">
+            <mat-icon>image_search</mat-icon>
+            {{ statsScanStatus() === 'scanning' ? 'Scanning…' : 'Scan Stats' }}
+          </button>
+
+          @if (statsScanMessage()) {
+            <span class="scan-message"
+                  [class.scan-error]="statsScanStatus() === 'error'"
+                  [class.scan-ok]="statsScanStatus() === 'done'">
+              {{ statsScanMessage() }}
+            </span>
+          }
+        </div>
+
+        <!-- Detected stats + troop levels -->
+        @if (statsScanResult(); as scan) {
+          @let edit = editingStats();
+          @let draft = statsDraft();
+          @let tDraft = troopsDraft();
+          <div class="stats-result">
+            <div class="stats-header-row">
+              @if (!edit) {
+                <button mat-icon-button class="row-edit-btn"
+                        matTooltip="Edit stats"
+                        (click)="startEditStats()">
+                  <mat-icon>edit</mat-icon>
+                </button>
+              } @else {
+                <button mat-icon-button class="row-edit-btn"
+                        matTooltip="Save"
+                        (click)="saveEditStats()">
+                  <mat-icon>check</mat-icon>
+                </button>
+                <button mat-icon-button class="row-edit-btn"
+                        matTooltip="Cancel"
+                        (click)="cancelEditStats()">
+                  <mat-icon>close</mat-icon>
+                </button>
+              }
+            </div>
+
+            <!-- Troop tier + FC table -->
+            <table class="stats-table troop-levels-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Tier (1–11)</th>
+                  <th>FC (0–5)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of [
+                  { key: 'inf',  label: '🛡️ Infantry', data: edit && tDraft ? tDraft.inf  : scan.troops.inf  },
+                  { key: 'lanc', label: '⚔️ Lancer',   data: edit && tDraft ? tDraft.lanc : scan.troops.lanc },
+                  { key: 'mark', label: '🎯 Marksman', data: edit && tDraft ? tDraft.mark : scan.troops.mark },
+                ]; track row.key) {
+                  <tr>
+                    <td class="type-cell">{{ row.label }}</td>
+                    <td class="num-cell">
+                      @if (edit) {
+                        <input type="number" min="1" max="11" class="edit-input num"
+                               [value]="row.data.tier"
+                               (input)="updateTroopsDraft($any(row.key), 'tier', +$any($event.target).value || 0)" />
+                      } @else {
+                        T{{ row.data.tier }}
+                      }
+                    </td>
+                    <td class="num-cell">
+                      @if (edit) {
+                        <input type="number" min="0" max="5" class="edit-input num"
+                               [value]="row.data.fc"
+                               (input)="updateTroopsDraft($any(row.key), 'fc', +$any($event.target).value || 0)" />
+                      } @else {
+                        FC{{ row.data.fc }}
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+
+            <!-- Stat bonuses table -->
+            <table class="stats-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Attack</th>
+                  <th>Defense</th>
+                  <th>Lethality</th>
+                  <th>Health</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of [
+                  { key: 'inf',  label: '🛡️ Infantry', data: edit && draft ? draft.inf  : scan.stats.inf  },
+                  { key: 'lanc', label: '⚔️ Lancer',   data: edit && draft ? draft.lanc : scan.stats.lanc },
+                  { key: 'mark', label: '🎯 Marksman', data: edit && draft ? draft.mark : scan.stats.mark },
+                ]; track row.key) {
+                  <tr>
+                    <td class="type-cell">{{ row.label }}</td>
+                    @for (field of ['attack', 'defense', 'lethality', 'health']; track field) {
+                      <td class="num-cell">
+                        @if (edit) {
+                          <input type="number" class="edit-input num"
+                                 [value]="$any(row.data)[field]"
+                                 (input)="updateStatsDraft($any(row.key), $any(field), +$any($event.target).value || 0)" />
+                        } @else {
+                          +{{ $any(row.data)[field] }}%
+                        }
+                      </td>
+                    }
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+      </mat-card-content>
+    }
+  </mat-card>
+
+  <!-- Hero Scan Card -->
+  <mat-card class="scan-card">
+    <mat-card-header (click)="scanExpanded.set(!scanExpanded())" class="scan-header">
+      <mat-card-title>📸 Scan Heroes from Screenshot</mat-card-title>
+      <mat-icon class="scan-chevron">{{ scanExpanded() ? 'expand_less' : 'expand_more' }}</mat-icon>
+    </mat-card-header>
+
+    @if (scanExpanded()) {
+      <mat-card-content class="scan-content">
+
+        <div class="scan-instructions">
+          In-game: Go to your <strong>Heroes</strong>, sort by <strong>quality</strong> and take a screenshot. Make sure all your main SSR hereoes are in view.
+        </div>
+
+        <div class="scan-fields">
+          <div class="scan-field">
+            <label class="scan-label">Screenshot</label>
+            <input type="file"
+                   accept="image/*"
+                   class="scan-file-input"
+                   (change)="onScanFileSelected($event)" />
+          </div>
+        </div>
+
+        <div class="scan-actions">
+          <button mat-flat-button color="primary"
+                  [disabled]="!scanFile() || scanStatus() === 'scanning'"
+                  (click)="scanHeroes()">
+            <mat-icon>image_search</mat-icon>
+            {{ scanStatus() === 'scanning' ? 'Scanning…' : 'Scan Stars' }}
+          </button>
+
+          @if (scanMessage()) {
+            <span class="scan-message" [class.scan-error]="scanStatus() === 'error'" [class.scan-ok]="scanStatus() === 'done'">
+              {{ scanMessage() }}
+            </span>
+          }
+        </div>
+
+        <!-- Hero Input Cards grouped by Gen — collapse with the scan card. -->
+        @for (genEntry of generations(); track genEntry[0]) {
+          <div class="gen-section">
+            <h2 class="gen-title">Generation {{ genEntry[0] }}</h2>
+            <div class="hero-grid">
+              @for (input of genEntry[1]; track input.name) {
+                <mat-card class="hero-card" [class.owned]="input.owned">
+                  <mat-card-header>
+                    <div class="hero-title-row">
+                      <mat-checkbox
+                        [checked]="input.owned"
+                        (change)="updateOwned(input.name, $event.checked)"
+                        color="primary">
+                        <span class="hero-name">{{ input.name }}</span>
+                      </mat-checkbox>
+                      <span class="type-badge" [ngClass]="typeColor(getHeroBase(input.name).type)">
+                        {{ typeIcon(getHeroBase(input.name).type) }} {{ getHeroBase(input.name).type }}
+                      </span>
+                    </div>
+                  </mat-card-header>
+
+                  @if (input.owned) {
+                    <mat-card-content class="hero-sliders">
+                      <!-- Stars slider 1–5 -->
+                      <div class="slider-row">
+                        <label>Stars</label>
+                        <div class="slider-with-value">
+                          <mat-slider min="1" max="5" step="1" discrete [displayWith]="starLabel">
+                            <input matSliderThumb [value]="input.stars" (valueChange)="updateStars(input.name, $event)" />
+                          </mat-slider>
+                          <span class="slider-val">{{ input.stars }}★</span>
+                        </div>
+                      </div>
+
+                      <!-- Widget slider 0–10 -->
+                      <div class="slider-row">
+                        <label>Widget</label>
+                        <div class="slider-with-value">
+                          <mat-slider min="0" max="10" step="1" discrete>
+                            <input matSliderThumb [value]="input.widget" (valueChange)="updateWidget(input.name, $event)" />
+                          </mat-slider>
+                          <span class="slider-val">W{{ input.widget }}</span>
+                        </div>
+                      </div>
+                    </mat-card-content>
+                  }
+                </mat-card>
+              }
+            </div>
+          </div>
+        }
+
+      </mat-card-content>
+    }
+  </mat-card>
+
+  <!-- Action Buttons -->
+  <div class="action-row">
+    <button mat-flat-button color="primary" (click)="calculate()">
+      <mat-icon>calculate</mat-icon> Calculate Best Lineup
+    </button>
+    <button mat-stroked-button (click)="reset()">
+      <mat-icon>refresh</mat-icon> Reset
+    </button>
+  </div>
+
+  <!-- Result Panel -->
+  @if (result(); as res) {
+    <mat-card class="result-card">
+      <mat-card-header>
+        <mat-card-title>🏆 Your Optimal Lineup</mat-card-title>
+        <mat-card-subtitle>{{ res.strategy }}</mat-card-subtitle>
+      </mat-card-header>
+      <mat-card-content>
+
+        <!-- Squad -->
+        <div class="squad-row">
+          @for (hero of res.squad; track hero.name) {
+            <div class="squad-hero" [ngClass]="typeColor(hero.type)">
+              <div class="squad-icon">{{ typeIcon(hero.type) }}</div>
+              <div class="squad-name">{{ hero.name }}</div>
+              <div class="squad-meta">{{ hero.stars }}★ · W{{ hero.widget }}</div>
+              <div class="squad-score">Score: {{ hero.score | number:'1.1-1' }}</div>
+            </div>
+          }
+        </div>
+
+        <mat-divider class="divider" />
+
+        <!-- Battle Stats table -->
+        @let stats = effectiveStats();
+        <div class="battle-stats-section">
+          <div class="battle-stats-title">
+            <mat-icon>shield</mat-icon>
+            <span>Battle Stats (% bonuses used in simulation)</span>
+          </div>
+          <div class="battle-stats-table">
+            <div class="bs-header">
+              <span></span>
+              <span>ATK</span>
+              <span>DEF</span>
+              <span>LETH</span>
+              <span>HP</span>
+            </div>
+            <div class="bs-row infantry">
+              <span class="bs-label">🛡️ Infantry</span>
+              <span>{{ stats.inf.attack | number:'1.0-0' }}%</span>
+              <span>{{ stats.inf.defense | number:'1.0-0' }}%</span>
+              <span>{{ stats.inf.lethality | number:'1.0-0' }}%</span>
+              <span>{{ stats.inf.health | number:'1.0-0' }}%</span>
+            </div>
+            <div class="bs-row lancer">
+              <span class="bs-label">⚔️ Lancer</span>
+              <span>{{ stats.lanc.attack | number:'1.0-0' }}%</span>
+              <span>{{ stats.lanc.defense | number:'1.0-0' }}%</span>
+              <span>{{ stats.lanc.lethality | number:'1.0-0' }}%</span>
+              <span>{{ stats.lanc.health | number:'1.0-0' }}%</span>
+            </div>
+            <div class="bs-row marksman">
+              <span class="bs-label">🎯 Marksman</span>
+              <span>{{ stats.mark.attack | number:'1.0-0' }}%</span>
+              <span>{{ stats.mark.defense | number:'1.0-0' }}%</span>
+              <span>{{ stats.mark.lethality | number:'1.0-0' }}%</span>
+              <span>{{ stats.mark.health | number:'1.0-0' }}%</span>
+            </div>
+          </div>
+        </div>
+
+        <mat-divider class="divider" />
+
+        <!-- Avg Score + Troop Ratio -->
+        <div class="ratio-row">
+          <mat-icon>people</mat-icon>
+          <span><strong>Troop Ratio:</strong></span>
+          <input type="text"
+                 class="ratio-input"
+                 [ngModel]="playerRatio()"
+                 (ngModelChange)="playerRatio.set($event); simResult.set(null)" />
+          <span class="ratio-label">(Infantry / Lancer / Marksman — recommended: {{ res.ratio }})</span>
+        </div>
+        <div class="avg-score-row">
+          <mat-icon>bar_chart</mat-icon>
+          <span><strong>Avg Squad Score:</strong> {{ res.avgScore | number:'1.1-1' }}</span>
+          <span class="ratio-label">(pivot: 15.0)</span>
+        </div>
+
+        <!-- Notes -->
+        @if (res.notes.length) {
+          <div class="notes">
+            @for (note of res.notes; track note) {
+              <div class="note-item">{{ note }}</div>
+            }
+          </div>
+        }
+
+        <mat-divider class="divider" />
+
+        <!-- Run Simulation button -->
+        <div class="sim-action-row">
+          <button mat-flat-button color="accent"
+                  [disabled]="simRunning()"
+                  (click)="runSimulation()">
+            <mat-icon>science</mat-icon>
+            {{ simRunning() ? 'Running…' : 'Run Simulation' }}
+          </button>
+          <span class="sim-hint">Tests your lineup vs the two opponent ratios below (20 runs each)</span>
+        </div>
+
+        <!-- Editable opponent ratios -->
+        <div class="opp-ratios-row">
+          <span class="opp-ratios-label">Opponent ratios:</span>
+          <input type="text"
+                 class="ratio-input"
+                 [ngModel]="opponentRatioA()"
+                 (ngModelChange)="opponentRatioA.set($event); simResult.set(null)" />
+          <input type="text"
+                 class="ratio-input"
+                 [ngModel]="opponentRatioB()"
+                 (ngModelChange)="opponentRatioB.set($event); simResult.set(null)" />
+        </div>
+
+      </mat-card-content>
+    </mat-card>
+  }
+
+  <!-- Simulation Results -->
+  @if (simResult(); as sim) {
+    <mat-card class="sim-card">
+      <mat-card-header>
+        <mat-card-title>🧪 Simulation Results</mat-card-title>
+        <mat-card-subtitle>{{ sim.recommendedRatio }} vs 3 opponent strength levels · {{ sim.totalTroops | number }} troops each side · 20 runs each</mat-card-subtitle>
+      </mat-card-header>
+      <mat-card-content>
+
+        <!-- Header row -->
+        <div class="sim-grid-header">
+          <span></span>
+          <span>vs {{ sim.opponentRatioA }}</span>
+          <span>vs {{ sim.opponentRatioB }}</span>
+        </div>
+
+        <!-- One row per strength preset -->
+        @for (row of sim.results; track row.preset.label) {
+          <div class="sim-grid-row">
+            <span class="sim-preset-label" [class]="'preset-' + row.preset.label.toLowerCase()">
+              {{ row.preset.label }}
+            </span>
+
+            <div class="sim-cell" [class.sim-win]="row.vsA.attWins" [class.sim-lose]="!row.vsA.attWins">
+              <span class="sim-verdict-sm">{{ row.vsA.attWins ? '✅' : '❌' }}</span>
+              <span class="sim-wins-sm">{{ row.vsA.wins }}/{{ row.vsA.total }}</span>
+              <span class="sim-surv-sm">{{ row.vsA.avgAttSurvivors | number }} vs {{ row.vsA.avgDefSurvivors | number }}</span>
+            </div>
+
+            <div class="sim-cell" [class.sim-win]="row.vsB.attWins" [class.sim-lose]="!row.vsB.attWins">
+              <span class="sim-verdict-sm">{{ row.vsB.attWins ? '✅' : '❌' }}</span>
+              <span class="sim-wins-sm">{{ row.vsB.wins }}/{{ row.vsB.total }}</span>
+              <span class="sim-surv-sm">{{ row.vsB.avgAttSurvivors | number }} vs {{ row.vsB.avgDefSurvivors | number }}</span>
+            </div>
+          </div>
+        }
+
+        <p class="sim-note">Opponent stats from real player data.</p>
+
+      </mat-card-content>
+    </mat-card>
+  }
+
+</div>
