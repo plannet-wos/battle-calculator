@@ -601,7 +601,7 @@ class SimBenefit {
     if (vs !== 'any' && !this.vs_units.includes(vs as UT)) return false;
 
     const dt = this.duration_type;
-    if ((dt === 'turn' || dt === 'round' || dt === 'turns') && this.duration !== -1) {
+    if ((dt === 'turn' || dt === 'round' || dt === 'turns' || dt === 'rounds') && this.duration !== -1) {
       if ((round - this.start_round) < this.lag) return false;
       if ((round - this.start_round - this.lag) >= this.duration) return false;
     }
@@ -917,10 +917,10 @@ class SimBattleRound {
 
   private calcCoef(stats: Record<string, Record<string, number>>): number {
     const damageUp      = Object.values(stats['DamageUp']      ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
-    const oppDamageDown = Object.values(stats['OppDamageDown'] ?? {}).reduce((p, v) => p * (1 - v / 100), 1);
+    const oppDamageDown = Object.values(stats['OppDamageDown'] ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
     const defenseUp     = Object.values(stats['DefenseUp']     ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
-    const oppDefDown    = Object.values(stats['OppDefenseDown'] ?? {}).reduce((p, v) => p * (1 - v / 100), 1);
-    return damageUp * oppDamageDown / (defenseUp * oppDefDown);
+    const oppDefDown    = Object.values(stats['OppDefenseDown'] ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
+    return (damageUp * oppDefDown) / (defenseUp * oppDamageDown);
   }
 
   private calcRoundArmy(ut: UT): number {
