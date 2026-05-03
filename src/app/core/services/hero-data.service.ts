@@ -24,7 +24,7 @@ export class HeroDataService {
     { name: 'Lynn', gen: 4, type: 'Marksman' },
     // Gen 5
     { name: 'Hector', gen: 5, type: 'Infantry' },
-    { name: 'Nora', gen: 5, type: 'Lancer' },
+    { name: 'Norah', gen: 5, type: 'Lancer' },
     { name: 'Gwen', gen: 5, type: 'Marksman' },
   ];
 }

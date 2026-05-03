@@ -3,7 +3,7 @@ import { Injectable } from '@angular/core';
 // Hero order as they appear in the in-game screenshot when sorted by Quality
 // (gen-5 first, top-to-bottom, left-to-right). 4 columns × 4 rows.
 const SCAN_ORDER: string[] = [
-  'Gwen',     'Nora',     'Hector',   'Lynn',
+  'Gwen',     'Norah',    'Hector',   'Lynn',
   'Reina',    'Ahmose',   'Greg',     'Mia',
   'Logan',    'Alonso',   'Philly',   'Flint',
   'Zinman',   'Molly',    'Jeronimo', 'Natalia',

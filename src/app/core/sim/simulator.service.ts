@@ -80,7 +80,7 @@ const HERO_SKILL_MAP: Record<string, unknown[]> = {
   'Logan':    LoganSkills    as unknown[],
   'Reina':    ReinaSkills    as unknown[],
   'Hector':   HectorSkills   as unknown[],
-  'Nora':     NorahSkills    as unknown[],
+  'Norah':    NorahSkills    as unknown[],
   'Mia':      MiaSkills      as unknown[],
   'Ahmose':   AhmoseSkills   as unknown[],
   'Lynn':     LynnSkills     as unknown[],
@@ -934,7 +934,7 @@ class SimBattleRound {
 // FIGHTER
 // =====================================================================
 
-class SimFighter {
+export class SimFighter {
   name: string;
   troops_by_type: Record<UT, number>;
   attack_by_type: Record<UT, number> = { inf: 0, lanc: 0, mark: 0 };
@@ -1047,7 +1047,7 @@ class SimFighter {
 // FIGHT (battle orchestrator)
 // =====================================================================
 
-class SimFight {
+export class SimFight {
   attacker: SimFighter;
   defender: SimFighter;
   max_round: number;
