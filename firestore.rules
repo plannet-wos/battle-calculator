@@ -1,0 +1,46 @@
+rules_version = '2';
+
+// Public save-code feature: anyone can create a save (with the constraints
+// below) and anyone can read by code, but no client can update or delete an
+// existing save. Codes are immutable so a code you share keeps working.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /saves/{code} {
+      // Reads are open — anyone with the 4-char code can load that save.
+      allow read: if true;
+
+      // Creates require:
+      //   • code-shaped document ID (4 chars, alphabet matches client)
+      //   • payload has the schema we expect (recommendations is OPTIONAL — old
+      //     saves without it still load, just with no cached cards)
+      //   • required fields are the right shape
+      //   • createdAt is the server timestamp (no client-set times)
+      // Firestore platform-enforces a 1 MB doc cap which is plenty here
+      // (heroes + gear + stats + 4 cards is ~10 KB).
+      allow create: if isValidCode(code)
+        && request.resource.data.keys().hasOnly(['v', 'heroes', 'gear', 'stats', 'recommendations', 'createdAt'])
+        && request.resource.data.keys().hasAll(['v', 'heroes', 'gear', 'stats', 'createdAt'])
+        && request.resource.data.v == 1
+        && request.resource.data.heroes is list
+        && request.resource.data.heroes.size() <= 32
+        && request.resource.data.gear is map
+        && request.resource.data.stats is map
+        && request.resource.data.createdAt == request.time;
+
+      // Saves are immutable — never let a client overwrite or delete a code
+      // that's already in use.
+      allow update, delete: if false;
+    }
+
+    // Default-deny everything else.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
+// 4-char codes from the alphabet 23456789ABCDEFGHJKMNPQRSTUVWXYZ.
+function isValidCode(code) {
+  return code.matches('^[2-9A-HJ-NP-Z]{4}$');
+}

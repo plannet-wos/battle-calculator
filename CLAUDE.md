@@ -14,8 +14,8 @@ Part of the **[Plannet WOS](https://plannet-wos.web.app)** suite.
 2. **UI:** Angular Material + Angular CDK. No other UI libraries.
 3. **Change Detection:** Zoneless (`provideZonelessChangeDetection()`). Do NOT re-introduce zone.js.
 4. **State management:** Angular signals only. No RxJS for component state.
-5. **All processing is client-side.** No backend, no server calls for scans. OCR runs via Tesseract.js in the browser.
-6. **Deployment:** Firebase Hosting, site name `wos-battle-calculator`.
+5. **All scan/calc processing is client-side.** No backend, no server calls for scans. OCR runs via Tesseract.js in the browser. The only server-side dependency is Firestore for the save-code feature (read/write a 4-char code → JSON blob of the user's heroes/gear/stats, see `core/services/save-code.service.ts`).
+6. **Deployment:** Firebase Hosting, site name `wos-battle-calculator`. Firestore rules in `firestore.rules`.
 7. **No authentication.** The calculator is a public tool, no login required.
 
 ---
@@ -37,6 +37,7 @@ src/app/
       gear-scan.service.ts         # OCR pipeline: screenshot → detected gear items
       stats-scan.service.ts        # OCR pipeline: battle report → stat bonuses + troop tiers
       hero-scan.service.ts         # OCR pipeline: hero roster → star levels
+      save-code.service.ts         # Firestore-backed 4-char codes for share/reload
     sim/
       simulator.service.ts         # Round-by-round battle simulator
   shared/

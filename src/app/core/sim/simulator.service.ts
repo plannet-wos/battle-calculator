@@ -15,6 +15,7 @@ import { ScoredHero, AccountStats, StrengthPreset, GearScanResult, DetectedGearI
 // ---------- JSON data imports ----------
 import TROOP_STATS_RAW from './data/troop_stats.json';
 import TROOP_SKILLS_RAW from './data/troop_skills.json';
+import DISCOVERED_TARGETS from './data/discovered-targets.json';
 import GwenSkills    from './data/Gwen.json';
 import LoganSkills   from './data/Logan.json';
 import ReinaSkills   from './data/Reina.json';
@@ -80,7 +81,7 @@ const HERO_SKILL_MAP: Record<string, unknown[]> = {
   'Logan':    LoganSkills    as unknown[],
   'Reina':    ReinaSkills    as unknown[],
   'Hector':   HectorSkills   as unknown[],
-  'Nora':     NorahSkills    as unknown[],
+  'Norah':    NorahSkills    as unknown[],
   'Mia':      MiaSkills      as unknown[],
   'Ahmose':   AhmoseSkills   as unknown[],
   'Lynn':     LynnSkills     as unknown[],
@@ -141,6 +142,35 @@ export function addAccountStats(...statsList: AccountStats[]): AccountStats {
     result.mark.health += stats.mark.health;
   }
   return result;
+}
+
+/**
+ * Flattens AccountStats into a uniform-across-all-slots profile by averaging
+ * every one of the 12 slots (3 troop types × 4 stats) and applying that mean
+ * scalar to every slot. Used by the targets recommender to give both sides a
+ * fair, balanced baseline so the simulation tests pure composition + heroes
+ * rather than the player's stat asymmetry between troop types.
+ */
+export function flattenAccountStats(s: AccountStats): AccountStats {
+  const all = [
+    s.inf.attack,  s.inf.defense,  s.inf.lethality,  s.inf.health,
+    s.lanc.attack, s.lanc.defense, s.lanc.lethality, s.lanc.health,
+    s.mark.attack, s.mark.defense, s.mark.lethality, s.mark.health,
+  ];
+  const avg = all.reduce((a, b) => a + b, 0) / all.length;
+  const slot = (): UnitStatBonusLike => ({ attack: avg, defense: avg, lethality: avg, health: avg });
+  return { inf: slot(), lanc: slot(), mark: slot() };
+}
+type UnitStatBonusLike = { attack: number; defense: number; lethality: number; health: number };
+
+export function scaleAccountStats(s: AccountStats, factor: number): AccountStats {
+  const slot = (u: UnitStatBonusLike): UnitStatBonusLike => ({
+    attack:    u.attack    * factor,
+    defense:   u.defense   * factor,
+    lethality: u.lethality * factor,
+    health:    u.health    * factor,
+  });
+  return { inf: slot(s.inf), lanc: slot(s.lanc), mark: slot(s.mark) };
 }
 
 /**
@@ -601,7 +631,7 @@ class SimBenefit {
     if (vs !== 'any' && !this.vs_units.includes(vs as UT)) return false;
 
     const dt = this.duration_type;
-    if ((dt === 'turn' || dt === 'round' || dt === 'turns') && this.duration !== -1) {
+    if ((dt === 'turn' || dt === 'round' || dt === 'turns' || dt === 'rounds') && this.duration !== -1) {
       if ((round - this.start_round) < this.lag) return false;
       if ((round - this.start_round - this.lag) >= this.duration) return false;
     }
@@ -917,10 +947,10 @@ class SimBattleRound {
 
   private calcCoef(stats: Record<string, Record<string, number>>): number {
     const damageUp      = Object.values(stats['DamageUp']      ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
-    const oppDamageDown = Object.values(stats['OppDamageDown'] ?? {}).reduce((p, v) => p * (1 - v / 100), 1);
+    const oppDamageDown = Object.values(stats['OppDamageDown'] ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
     const defenseUp     = Object.values(stats['DefenseUp']     ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
-    const oppDefDown    = Object.values(stats['OppDefenseDown'] ?? {}).reduce((p, v) => p * (1 - v / 100), 1);
-    return damageUp * oppDamageDown / (defenseUp * oppDefDown);
+    const oppDefDown    = Object.values(stats['OppDefenseDown'] ?? {}).reduce((p, v) => p * (1 + v / 100), 1);
+    return (damageUp * oppDefDown) / (defenseUp * oppDamageDown);
   }
 
   private calcRoundArmy(ut: UT): number {
@@ -934,7 +964,7 @@ class SimBattleRound {
 // FIGHTER
 // =====================================================================
 
-class SimFighter {
+export class SimFighter {
   name: string;
   troops_by_type: Record<UT, number>;
   attack_by_type: Record<UT, number> = { inf: 0, lanc: 0, mark: 0 };
@@ -1047,7 +1077,7 @@ class SimFighter {
 // FIGHT (battle orchestrator)
 // =====================================================================
 
-class SimFight {
+export class SimFight {
   attacker: SimFighter;
   defender: SimFighter;
   max_round: number;
@@ -1157,6 +1187,149 @@ function parseRatioToTroops(ratio: string, total: number): Record<UT, number> {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// VS-TARGETS RECOMMENDER constants
+//
+// The 8 targets in `discovered-targets.json` were generated assuming each
+// target hero is at 5★/widget 10 (max) — so we instantiate them at the same
+// loadout when sim'ing against them. This matches the discovery script's
+// `HERO_STARS=5, HERO_WIDGET=10` config.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HERO_STARS_FOR_TARGETS = 5;
+const HERO_WIDGET_FOR_TARGETS = 10;
+
+// Minimal hero gen/type table needed to compute target-side hero stat bonuses.
+// Mirrors `HeroDataService.heroes` but kept local so the simulator service has
+// no dependency on the Angular service layer (it's instantiated in workers,
+// scripts, etc.).
+const HEROES_FOR_BONUS: Array<{ name: string; gen: number; type: 'Infantry' | 'Lancer' | 'Marksman' }> = [
+  { name: 'Jeronimo', gen: 0, type: 'Infantry' }, { name: 'Natalia', gen: 0, type: 'Infantry' },
+  { name: 'Flint',    gen: 2, type: 'Infantry' }, { name: 'Logan',   gen: 3, type: 'Infantry' },
+  { name: 'Ahmose',   gen: 4, type: 'Infantry' }, { name: 'Hector',  gen: 5, type: 'Infantry' },
+  { name: 'Molly',    gen: 1, type: 'Lancer'   }, { name: 'Philly',  gen: 2, type: 'Lancer'   },
+  { name: 'Mia',      gen: 3, type: 'Lancer'   }, { name: 'Reina',   gen: 4, type: 'Lancer'   },
+  { name: 'Norah',    gen: 5, type: 'Lancer'   },
+  { name: 'Zinman',   gen: 1, type: 'Marksman' }, { name: 'Alonso',  gen: 2, type: 'Marksman' },
+  { name: 'Greg',     gen: 3, type: 'Marksman' }, { name: 'Lynn',    gen: 4, type: 'Marksman' },
+  { name: 'Gwen',     gen: 5, type: 'Marksman' },
+];
+
+interface DiscoveredTarget {
+  rank: number;
+  squad: string;          // "Inf+Lanc+Mark" hero names
+  ratio: string;          // "I/L/M" troop ratio
+  winRate: number;
+  winRateShortlist: number;
+  winRateBroad: number;
+}
+interface DiscoveredTargetsFile {
+  targets: DiscoveredTarget[];
+}
+
+export interface VsTargetResult {
+  /** Human-readable target identity, e.g. "Ahmose+Mia+Gwen 75/10/15". */
+  target: string;
+  /** Per-target metric value ∈ [0..1] (attacker survival or enemy kill rate,
+   *  depending on the scenario). */
+  metricValue: number;
+  /** Average absolute number of player troops still on the field at the end
+   *  of the battle, across the simulation runs. Same number the upstream
+   *  WoS sim shows under "Survived" in its Units Details panel. The sim's
+   *  binary alive/downed model means "downed" troops bundle lightly-injured,
+   *  severely-injured, and dead — so survivors is the cleaner number to
+   *  reason about. Optional so older saves without these fields still load. */
+  playerSurvivors?: number;
+  /** Average absolute number of enemy troops still on the field at end. */
+  enemySurvivors?: number;
+}
+
+export interface VsTargetsRecommendation {
+  /** Best player squad picked. */
+  squad: ScoredHero[];
+  /** Best player ratio for that squad. */
+  ratio: string;
+  /** Avg metric value of the winning (squad, ratio) across all 8 targets. */
+  avgMetric: number;
+  /** Per-target outcomes for the winner. */
+  vsTargets: VsTargetResult[];
+  /** All squads ranked by Stage-A qualifier metric at 5/2/3. */
+  qualifier: Array<{ squad: string; metricValue: number }>;
+}
+
+/**
+ * A single recommendation scenario. Each recommendation type (vs-meta general,
+ * vs-city at 3 different stat differentials, vs-stronger, vs-weaker) is
+ * parameterised by these fields.
+ */
+export type ScenarioId =
+  | 'general'
+  | 'vsCity15'   // 200k vs 3M, enemy at 85% of player stats
+  | 'vsCity25'   // 200k vs 3M, enemy at 75% of player stats
+  | 'vsCity50'   // 200k vs 3M, enemy at 50% of player stats
+  | 'vsStrong'
+  | 'vsWeak';
+
+export interface Scenario {
+  id: ScenarioId;
+  /** Short human-readable name used in merged-card titles, e.g. "general". */
+  label: string;
+  /** Total troops fielded by the player. */
+  playerTotal: number;
+  /** Total troops fielded by the enemy. */
+  enemyTotal: number;
+  /** Multiplier applied uniformly to the averaged enemy baseline.
+   *  Player always uses their EXACT (asymmetric) stats; only the enemy is
+   *  flattened then scaled, so it stays a fair-but-themed opponent. */
+  enemyStatScale: number;
+  /** If set, overrides each target's own ratio (e.g. cities march 5/2/3). */
+  enemyRatio: string | null;
+  /** Fitness signal to optimise:
+   *   - attackerSurvival: % of player's troops alive at end (rewards winning)
+   *   - enemyKillRate:    % of enemy's troops killed (rewards damage when
+   *                       outright victory is impossible, e.g. 200k vs 3M city) */
+  metric: 'attackerSurvival' | 'enemyKillRate';
+}
+
+export const SCENARIOS: Record<ScenarioId, Scenario> = {
+  general:  { id: 'general',  label: 'general',           playerTotal: 100_000, enemyTotal: 100_000,   enemyStatScale: 1.00, enemyRatio: null,    metric: 'attackerSurvival' },
+  vsCity15: { id: 'vsCity15', label: 'against city (-15%)', playerTotal: 200_000, enemyTotal: 3_000_000, enemyStatScale: 0.85, enemyRatio: '5/2/3', metric: 'enemyKillRate'    },
+  vsCity25: { id: 'vsCity25', label: 'against city (-25%)', playerTotal: 200_000, enemyTotal: 3_000_000, enemyStatScale: 0.75, enemyRatio: '5/2/3', metric: 'enemyKillRate'    },
+  vsCity50: { id: 'vsCity50', label: 'against city (-50%)', playerTotal: 200_000, enemyTotal: 3_000_000, enemyStatScale: 0.50, enemyRatio: '5/2/3', metric: 'enemyKillRate'    },
+  vsStrong: { id: 'vsStrong', label: 'against stronger',  playerTotal: 160_000, enemyTotal: 180_000,   enemyStatScale: 1.15, enemyRatio: null,    metric: 'attackerSurvival' },
+  vsWeak:   { id: 'vsWeak',   label: 'against weaker',    playerTotal: 160_000, enemyTotal: 140_000,   enemyStatScale: 0.85, enemyRatio: null,    metric: 'attackerSurvival' },
+};
+
+/**
+ * One recommendation card. The shape supports merging multiple scenarios into
+ * one card (`scenarios.length > 1`) but `recommendAll` currently always emits
+ * one card per scenario, so each `scenarios` / `perScenario` array is length 1.
+ */
+export interface MergedRecommendation {
+  /** All scenarios whose top pick matched this (squad, ratio). */
+  scenarios: Scenario[];
+  squad: ScoredHero[];
+  ratio: string;
+  /** Per-scenario fitness + supporting data shown in the per-card details
+   *  dialog ("how this card was deduced"). `qualifier` is the Stage-A ranking
+   *  trimmed to the top 10 squads to keep the saved-code payload bounded. */
+  perScenario: Array<{
+    scenarioId: ScenarioId;
+    metricValue: number;
+    vsTargets: VsTargetResult[];
+    qualifier: Array<{ squad: string; metricValue: number }>;
+  }>;
+  /** True while this card's scenario is being recomputed in a worker. The
+   *  squad / ratio / perScenario fields may still hold the previous (stale)
+   *  result so the UI can keep them visible under a loading overlay rather
+   *  than blanking out — the user can still click through cards while the
+   *  recalc runs. Cleared once the worker posts back a fresh result. */
+  loading?: boolean;
+}
+
+/** Top-N squads kept in `MergedRecommendation.perScenario[i].qualifier`. */
+const QUALIFIER_KEEP_TOP = 10;
+
 export interface RatioRecommendation {
   /** The recommended ratio (e.g. "48/4/48"). */
   ratio: string;
@@ -1234,6 +1407,223 @@ export class SimulatorService {
       qualifier,
       finalists,
     };
+  }
+
+  /**
+   * Picks the best (squad, ratio) for the player by simulating against the 8
+   * discovered meta-targets under a given scenario.
+   *
+   * Stat handling:
+   *   - Player keeps their EXACT (asymmetric) `attBaseStats`, plus their
+   *     hero bonus. The recommender is finding the best lineup for that
+   *     specific stat profile.
+   *   - Enemy uses a flat baseline (avg of all 12 user slots) ×
+   *     `scenario.enemyStatScale`, plus the target's own hero bonus. This
+   *     keeps the opponent thematically tuned (stronger / weaker / city) while
+   *     keeping enemy comparisons internally fair.
+   *
+   * Troop-totals and enemy ratio are also driven by the scenario, so e.g.
+   * vs-city runs 200k attacker vs 3M defender at fixed 5/2/3.
+   *
+   * Two-stage:
+   *   Stage A (squad qualifier): every valid 1+1+1 squad from owned heroes
+   *     plays 5/2/3 vs each of the 8 targets, RUNS_QUAL battles each. Score =
+   *     average scenario metric. Top SQUAD_FINALISTS squads advance.
+   *   Stage B (gauntlet): each surviving squad × every candidate ratio plays
+   *     each target, RUNS_FINAL battles each. Score = average scenario metric
+   *     across all 8 targets. Best (squad, ratio) wins.
+   */
+  recommendVsTargets(
+    ownedHeroes: ScoredHero[],
+    attBaseStats: AccountStats,
+    attLevels: TroopLevels = defaultTroopLevels(),
+    scenario: Scenario = SCENARIOS.general,
+    options: { fast?: boolean } = {},
+  ): VsTargetsRecommendation | null {
+    // Fast mode trades sample size for runtime. See the "Fast vs thorough"
+    // section of the math dialog for the rationale; tuning is concentrated
+    // here so it stays one-stop-shop to adjust.
+    const FAST = !!options.fast;
+    const RUNS_QUAL       = FAST ?  4 : 10;
+    const RUNS_FINAL      = FAST ?  8 : 20;
+    const SQUAD_FINALISTS = FAST ?  5 :  3;
+    const TARGETS_KEEP    = FAST ?  4 :  8;   // top-N from the discovery ranking
+
+    // Stage-B ratio pool. Thorough mode tests every realistic profile
+    // (balanced and stacked); fast mode keeps the 8 most common balanced
+    // shapes. Either way we also dedupe-in each kept target's own ratio so
+    // we always consider going toe-to-toe with the meta.
+    const RATIO_POOL_BASE = FAST
+      ? [
+          '5/2/3', '5/3/2', '5/4/1', '5/1/4',
+          '6/3/1', '6/1/3', '7/2/1', '7/1/2',
+        ]
+      : [
+          '5/2/3', '5/3/2', '5/4/1', '5/1/4',
+          '6/3/1', '6/1/3', '4/3/3', '4/4/2',
+          '7/2/1', '7/1/2',
+          '70/10/20', '70/20/10',
+          '60/10/30', '60/30/10',
+          '50/30/20', '50/20/30',
+          '80/10/10',
+        ];
+
+    // Build candidate squads from owned heroes (1 inf + 1 lanc + 1 mark).
+    const inf  = ownedHeroes.filter(h => h.type === 'Infantry');
+    const lanc = ownedHeroes.filter(h => h.type === 'Lancer');
+    const mark = ownedHeroes.filter(h => h.type === 'Marksman');
+    if (!inf.length || !lanc.length || !mark.length) return null;
+
+    const squads: ScoredHero[][] = [];
+    for (const I of inf) for (const L of lanc) for (const M of mark) {
+      squads.push([I, L, M]);
+    }
+
+    // Enemy baseline: flatten user stats then scale per scenario.
+    const enemyBaseStats = scaleAccountStats(flattenAccountStats(attBaseStats), scenario.enemyStatScale);
+
+    // Build per-target enemy fighters once: heroes + the scenario's enemy
+    // baseline + hero bonus, plus the effective ratio (scenario override or
+    // target's own). Targets are pre-sorted by win rate in the JSON, so
+    // slice(0, TARGETS_KEEP) keeps the strongest defenders first.
+    const targets = (DISCOVERED_TARGETS as DiscoveredTargetsFile).targets.slice(0, TARGETS_KEEP);
+    const targetCtx = targets.map(t => {
+      const heroNames = t.squad.split('+').map(n => n.trim());
+      const heroSquad = heroNames.map(name => ({ name, widget: HERO_WIDGET_FOR_TARGETS }));
+      const heroStars = heroNames.map(name => {
+        const base = HEROES_FOR_BONUS.find(h => h.name === name);
+        return base ? { ...base, stars: HERO_STARS_FOR_TARGETS, widget: HERO_WIDGET_FOR_TARGETS, score: 0 } : null;
+      }).filter((h): h is ScoredHero => h !== null);
+      const defStats = addAccountStats(enemyBaseStats, baseHeroToStatsBonus(heroStars));
+      const ratio = scenario.enemyRatio ?? t.ratio;
+      return { label: `${t.squad} ${ratio}`, ratio, heroSquad, defStats };
+    });
+
+    // Convert one battle outcome into the scenario's chosen metric ∈ [0,1].
+    const computeMetric = (attRemaining: number, defRemaining: number): number => {
+      if (scenario.metric === 'attackerSurvival') {
+        return scenario.playerTotal > 0 ? attRemaining / scenario.playerTotal : 0;
+      }
+      return scenario.enemyTotal > 0 ? (scenario.enemyTotal - defRemaining) / scenario.enemyTotal : 0;
+    };
+
+    // Helper: simulate one (player squad, player ratio) vs one target across N
+    // runs. Returns avg metric value ∈ [0,1] plus avg absolute survivor counts
+    // per side (used by the per-target outcomes table in the details dialog).
+    type SimVsTargetResult = { metricValue: number; playerSurvivors: number; enemySurvivors: number };
+    const simVsTarget = (
+      attHeroes: { name: string; widget: number }[],
+      attStats: AccountStats,
+      playerRatio: string,
+      tgt: { ratio: string; heroSquad: { name: string; widget: number }[]; defStats: AccountStats },
+      runs: number,
+    ): SimVsTargetResult => {
+      const attTroops = parseRatioToTroops(playerRatio, scenario.playerTotal);
+      const defTroops = parseRatioToTroops(tgt.ratio, scenario.enemyTotal);
+      let totalMetric = 0;
+      let totalAttSurvivors = 0;
+      let totalDefSurvivors = 0;
+      for (let i = 0; i < runs; i++) {
+        const a = new SimFighter('Att', { ...attTroops }, attHeroes, attStats, attLevels);
+        const d = new SimFighter('Def', { ...defTroops }, tgt.heroSquad, tgt.defStats, attLevels);
+        const { attRemaining, defRemaining } = new SimFight(a, d).battle();
+        totalMetric        += computeMetric(attRemaining, defRemaining);
+        totalAttSurvivors  += attRemaining;
+        totalDefSurvivors  += defRemaining;
+      }
+      return {
+        metricValue:     totalMetric       / runs,
+        playerSurvivors: totalAttSurvivors / runs,
+        enemySurvivors:  totalDefSurvivors / runs,
+      };
+    };
+
+    // ── Stage A: squad qualifier ─────────────────────────────────────────
+    // Stage A only needs the metric for ranking — we throw away the injury
+    // counts here to keep the qualifier table small.
+    const qualifier = squads.map(sq => {
+      const heroSquad = sq.map(h => ({ name: h.name, widget: h.widget }));
+      const attStats = addAccountStats(attBaseStats, baseHeroToStatsBonus(sq));
+      let sum = 0;
+      for (const tgt of targetCtx) {
+        sum += simVsTarget(heroSquad, attStats, '5/2/3', tgt, RUNS_QUAL).metricValue;
+      }
+      return { squad: sq, metricValue: sum / targetCtx.length };
+    });
+    qualifier.sort((a, b) => b.metricValue - a.metricValue);
+    const finalists = qualifier.slice(0, Math.min(SQUAD_FINALISTS, qualifier.length));
+
+    // Build deduped ratio pool (target ratios + base pool).
+    const ratioSet = new Set<string>(RATIO_POOL_BASE);
+    for (const t of targets) ratioSet.add(t.ratio);
+    const ratioPool = [...ratioSet];
+
+    // ── Stage B: gauntlet ───────────────────────────────────────────────
+    type Combo = { squad: ScoredHero[]; ratio: string; metricValue: number; vsTargets: VsTargetResult[] };
+    const combos: Combo[] = [];
+    for (const f of finalists) {
+      const heroSquad = f.squad.map(h => ({ name: h.name, widget: h.widget }));
+      const attStats = addAccountStats(attBaseStats, baseHeroToStatsBonus(f.squad));
+      for (const r of ratioPool) {
+        const vsTargets: VsTargetResult[] = targetCtx.map(tgt => {
+          const sim = simVsTarget(heroSquad, attStats, r, tgt, RUNS_FINAL);
+          return {
+            target: tgt.label,
+            metricValue: sim.metricValue,
+            playerSurvivors: sim.playerSurvivors,
+            enemySurvivors: sim.enemySurvivors,
+          };
+        });
+        const avg = vsTargets.reduce((s, x) => s + x.metricValue, 0) / vsTargets.length;
+        combos.push({ squad: f.squad, ratio: r, metricValue: avg, vsTargets });
+      }
+    }
+    combos.sort((a, b) => b.metricValue - a.metricValue);
+    const winner = combos[0];
+
+    return {
+      squad: winner.squad,
+      ratio: winner.ratio,
+      avgMetric: winner.metricValue,
+      vsTargets: winner.vsTargets,
+      qualifier: qualifier.map(q => ({ squad: q.squad.map(h => h.name).join('+'), metricValue: q.metricValue })),
+    };
+  }
+
+  /**
+   * Runs all 4 scenarios and returns one card per scenario, in fixed order
+   * (general → vsCity → vsStrong → vsWeak). Each card's `scenarios` and
+   * `perScenario` arrays are length-1 — the merge-when-identical behavior was
+   * deliberately removed in favour of always showing one card per scenario.
+   * (`MergedRecommendation` keeps its name so the merging shape stays
+   * available if we ever want to re-enable grouping.)
+   */
+  recommendAll(
+    ownedHeroes: ScoredHero[],
+    attBaseStats: AccountStats,
+    attLevels: TroopLevels = defaultTroopLevels(),
+    options: { fast?: boolean } = {},
+  ): MergedRecommendation[] {
+    const ids: ScenarioId[] = ['general', 'vsCity15', 'vsCity25', 'vsCity50', 'vsStrong', 'vsWeak'];
+    const cards: MergedRecommendation[] = [];
+
+    for (const id of ids) {
+      const scenario = SCENARIOS[id];
+      const rec = this.recommendVsTargets(ownedHeroes, attBaseStats, attLevels, scenario, options);
+      if (!rec) continue;
+      cards.push({
+        scenarios: [scenario],
+        squad: rec.squad,
+        ratio: rec.ratio,
+        perScenario: [{
+          scenarioId: id,
+          metricValue: rec.avgMetric,
+          vsTargets: rec.vsTargets,
+          qualifier: rec.qualifier.slice(0, QUALIFIER_KEEP_TOP),
+        }],
+      });
+    }
+    return cards;
   }
 
   /**
