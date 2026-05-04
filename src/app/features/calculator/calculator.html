@@ -8,6 +8,32 @@
     </p>
   </div>
 
+  <!-- Load-by-code: reload heroes + gear + stats from a previous calculate -->
+  <mat-card class="load-code-card">
+    <mat-card-content class="load-code-content">
+      <mat-icon class="load-code-icon">history</mat-icon>
+      <span class="load-code-label">Have a save code?</span>
+      <input type="text"
+             class="load-code-input"
+             maxlength="4"
+             autocomplete="off"
+             autocapitalize="characters"
+             placeholder="e.g. K7M2"
+             [ngModel]="loadCodeInput()"
+             (ngModelChange)="loadCodeInput.set($any($event).toUpperCase())"
+             (keydown.enter)="loadByCode()" />
+      <button mat-flat-button color="primary"
+              [disabled]="loadingCode() || loadCodeInput().length !== 4"
+              (click)="loadByCode()">
+        <mat-icon>cloud_download</mat-icon>
+        {{ loadingCode() ? 'Loading…' : 'Load' }}
+      </button>
+      @if (loadCodeMessage()) {
+        <span class="load-code-message">{{ loadCodeMessage() }}</span>
+      }
+    </mat-card-content>
+  </mat-card>
+
   <!-- Gear Scan Card -->
   <mat-card class="scan-card">
     <mat-card-header (click)="gearScanExpanded.set(!gearScanExpanded())" class="scan-header">
@@ -381,36 +407,205 @@
 
   <!-- Action Buttons -->
   <div class="action-row">
-    <button mat-flat-button color="primary" (click)="calculate()">
-      <mat-icon>calculate</mat-icon> Calculate Best Lineup
+    <button mat-flat-button color="primary"
+            [disabled]="calculating()"
+            (click)="calculate()">
+      <mat-icon>calculate</mat-icon>
+      {{ calculating() && !calculatingFast() ? 'Calculating…' : 'Calculate Best Lineup' }}
     </button>
-    <button mat-stroked-button (click)="reset()">
+    <button mat-stroked-button color="primary"
+            [disabled]="calculating()"
+            matTooltip="~5× faster, ~80% as accurate. Top 4 targets, fewer runs, smaller ratio pool."
+            (click)="calculate({ fast: true })">
+      <mat-icon>flash_on</mat-icon>
+      {{ calculating() && calculatingFast() ? 'Fast running…' : 'Fast Calculate' }}
+    </button>
+    <button mat-stroked-button [disabled]="calculating()" (click)="reset()">
       <mat-icon>refresh</mat-icon> Reset
     </button>
   </div>
 
-  <!-- Result Panel -->
-  @if (result(); as res) {
+  <!-- Calculating spinner — vs-meta runs 6 scenarios, can take a couple of minutes -->
+  @if (calculating()) {
     <mat-card class="result-card">
+      <mat-card-content class="calculating-content">
+        <mat-spinner diameter="32"></mat-spinner>
+        @if (calculatingFast()) {
+          <span>Fast mode — running 6 scenarios vs the 4 strongest defenders. Should be done in under a minute…</span>
+        } @else {
+          <span>Thorough mode — running 6 scenarios vs the 8 top defenders. This can take a couple of minutes…</span>
+        }
+      </mat-card-content>
+    </mat-card>
+  }
+
+  <!-- Save code: lets the user reload their setup on any device -->
+  @if (saveCode(); as code) {
+    <mat-card class="save-code-card">
+      <mat-card-content class="save-code-content">
+        <mat-icon>save</mat-icon>
+        <span class="save-code-label">Save code:</span>
+        <span class="save-code-value">{{ code }}</span>
+        <button mat-icon-button matTooltip="Copy code" (click)="copySaveCode()">
+          <mat-icon>content_copy</mat-icon>
+        </button>
+        <span class="save-code-hint">Type this on any device to reload your heroes, gear &amp; stats.</span>
+      </mat-card-content>
+    </mat-card>
+  } @else if (saveCodeError(); as err) {
+    <mat-card class="save-code-card save-code-error">
+      <mat-card-content class="save-code-content">
+        <mat-icon>cloud_off</mat-icon>
+        <span class="save-code-hint">Save code unavailable: {{ err }}</span>
+      </mat-card-content>
+    </mat-card>
+  }
+
+  <!-- Recommendation Cards in two columns:
+         left  = balanced fights (general / vs stronger / vs weaker)
+         right = city raids (the 3 stat-handicap variants)
+       On mobile the columns stack vertically (fair fight first, then city)
+       which matches the user's mental model — pick a fight first, then check
+       what cities you can melt with what's left.
+       While a card is (re)calculated, a loading overlay covers it and any
+       stale data underneath stays visible until fresh data lands. -->
+  @if (recommendations()) {
+    <div class="recommendations-cols">
+      @if (fairFightRecs(); as recs) {
+        <div class="rec-col">
+          <h3 class="rec-col-heading">⚔️ Fair fight</h3>
+          @for (rec of recs; track rec.scenarios[0].id) {
+            <ng-container *ngTemplateOutlet="recCardTpl; context: { rec }"></ng-container>
+          }
+        </div>
+      }
+      @if (cityAttackRecs(); as recs) {
+        <div class="rec-col">
+          <h3 class="rec-col-heading">🏰 City attack</h3>
+          @for (rec of recs; track rec.scenarios[0].id) {
+            <ng-container *ngTemplateOutlet="recCardTpl; context: { rec }"></ng-container>
+          }
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Single rec-card template, shared by both columns. -->
+  <ng-template #recCardTpl let-rec="rec">
+    @let hasData = rec.squad.length > 0;
+    @let scenarioId = rec.scenarios[0].id;
+    <mat-card class="result-card rec-card"
+              role="button"
+              tabindex="0"
+              [class.rec-card-selected]="scenarioId === selectedScenarioId()"
+              [class.rec-card-loading]="rec.loading"
+              [class.rec-card-empty]="!hasData"
+              [matTooltip]="scenarioId === selectedScenarioId() ? 'Selected for simulation' : 'Click to use this lineup in the simulator'"
+              (click)="selectRec(scenarioId)"
+              (keydown.enter)="selectRec(scenarioId)"
+              (keydown.space)="selectRec(scenarioId); $event.preventDefault()">
       <mat-card-header>
-        <mat-card-title>🏆 Your Optimal Lineup</mat-card-title>
-        <mat-card-subtitle>{{ res.strategy }}</mat-card-subtitle>
+        <mat-card-title class="rec-card-title">
+          <span class="rec-card-title-text">
+            @if (scenarioId === selectedScenarioId()) {
+              <mat-icon class="rec-selected-check">check_circle</mat-icon>
+            }
+            🏆 {{ cardTitle(rec) }}
+          </span>
+          @if (hasData) {
+            <button mat-icon-button class="rec-help-btn"
+                    matTooltip="How was this picked?"
+                    (click)="openRecDetails(rec, $event)">
+              <mat-icon>help_outline</mat-icon>
+            </button>
+          }
+        </mat-card-title>
+        <mat-card-subtitle>
+          @if (hasData) {
+            @for (scn of rec.scenarios; track scn.id; let i = $index) {
+              <span class="rec-metric-line">{{ scenarioLine(rec, i) }}</span>
+            }
+          } @else {
+            <span class="rec-metric-line muted">Calculating…</span>
+          }
+        </mat-card-subtitle>
       </mat-card-header>
       <mat-card-content>
 
-        <!-- Squad -->
-        <div class="squad-row">
-          @for (hero of res.squad; track hero.name) {
-            <div class="squad-hero" [ngClass]="typeColor(hero.type)">
-              <div class="squad-icon">{{ typeIcon(hero.type) }}</div>
-              <div class="squad-name">{{ hero.name }}</div>
-              <div class="squad-meta">{{ hero.stars }}★ · W{{ hero.widget }}</div>
-              <div class="squad-score">Score: {{ hero.score | number:'1.1-1' }}</div>
-            </div>
+        @if (hasData) {
+          <!-- Squad -->
+          <div class="squad-row">
+            @for (hero of rec.squad; track hero.name) {
+              <div class="squad-hero" [ngClass]="typeColor(hero.type)">
+                <div class="squad-icon">{{ typeIcon(hero.type) }}</div>
+                <div class="squad-name">{{ hero.name }}</div>
+                <div class="squad-meta">{{ hero.stars }}★ · W{{ hero.widget }}</div>
+                <div class="squad-score">Score: {{ hero.score | number:'1.1-1' }}</div>
+              </div>
+            }
+          </div>
+
+          <mat-divider class="divider" />
+
+          <!-- Ratio + Avg Score -->
+          <div class="ratio-row">
+            <mat-icon>people</mat-icon>
+            <span><strong>Troop Ratio:</strong> {{ rec.ratio }}</span>
+            <span class="ratio-label">(Infantry / Lancer / Marksman)</span>
+          </div>
+          <div class="avg-score-row">
+            <mat-icon>bar_chart</mat-icon>
+            <span><strong>Avg Squad Score:</strong>
+              {{ recAvgScore(rec) | number:'1.1-1' }}
+            </span>
+            <span class="ratio-label">(pivot: 15.0)</span>
+          </div>
+        } @else {
+          <!-- Empty placeholder body — keeps the card the same height as
+               filled siblings so the grid doesn't jump as cards land. -->
+          <div class="rec-card-skeleton">
+            <div class="skeleton-row skeleton-row--squad"></div>
+            <div class="skeleton-row"></div>
+            <div class="skeleton-row skeleton-row--short"></div>
+          </div>
+        }
+
+      </mat-card-content>
+
+      @if (rec.loading) {
+        <div class="rec-card-loading-overlay">
+          <mat-spinner diameter="36"></mat-spinner>
+          @if (hasData) {
+            <span class="rec-card-loading-label">Updating…</span>
           }
         </div>
+      }
+    </mat-card>
+  </ng-template>
 
-        <mat-divider class="divider" />
+  <!-- Shared detail panel: battle stats + run-simulation. Uses whichever
+       recommendation card is currently selected (default: first). -->
+  @if (result(); as res) {
+    <mat-card class="result-card">
+      <mat-card-header>
+        <mat-card-title class="sim-card-title">
+          <span>🛡️ Battle Stats &amp; Simulation</span>
+          <button mat-icon-button class="math-help-btn"
+                  matTooltip="How is the lineup picked?"
+                  (click)="openMathExplanation()">
+            <mat-icon>help_outline</mat-icon>
+          </button>
+        </mat-card-title>
+        <mat-card-subtitle>
+          @if (recommendations()?.length; as n) {
+            Active lineup: <strong>{{ res.strategy }}</strong>
+            @if (n > 1) { <span class="sim-card-hint"> — click another card above to switch.</span> }
+          } @else {
+            Stats below are your effective bonuses.
+          }
+        </mat-card-subtitle>
+      </mat-card-header>
+      <mat-card-content>
 
         <!-- Battle Stats table -->
         @let stats = effectiveStats();
@@ -453,30 +648,16 @@
 
         <mat-divider class="divider" />
 
-        <!-- Avg Score + Troop Ratio -->
+        <!-- Editable simulation ratio (seeded from primary recommendation) -->
         <div class="ratio-row">
           <mat-icon>people</mat-icon>
-          <span><strong>Troop Ratio:</strong></span>
+          <span><strong>Sim Troop Ratio:</strong></span>
           <input type="text"
                  class="ratio-input"
                  [ngModel]="playerRatio()"
                  (ngModelChange)="playerRatio.set($event); simResult.set(null)" />
-          <span class="ratio-label">(Infantry / Lancer / Marksman — recommended: {{ res.ratio }})</span>
+          <span class="ratio-label">(primary recommendation: {{ res.ratio }})</span>
         </div>
-        <div class="avg-score-row">
-          <mat-icon>bar_chart</mat-icon>
-          <span><strong>Avg Squad Score:</strong> {{ res.avgScore | number:'1.1-1' }}</span>
-          <span class="ratio-label">(pivot: 15.0)</span>
-        </div>
-
-        <!-- Notes -->
-        @if (res.notes.length) {
-          <div class="notes">
-            @for (note of res.notes; track note) {
-              <div class="note-item">{{ note }}</div>
-            }
-          </div>
-        }
 
         <mat-divider class="divider" />
 
