@@ -15,7 +15,7 @@ Part of the **[Plannet WOS](https://plannet-wos.web.app)** suite.
 3. **Change Detection:** Zoneless (`provideZonelessChangeDetection()`). Do NOT re-introduce zone.js.
 4. **State management:** Angular signals only. No RxJS for component state.
 5. **All scan/calc processing is client-side.** No backend, no server calls for scans. OCR runs via Tesseract.js in the browser. The only server-side dependency is Firestore for the save-code feature (read/write a 4-char code → JSON blob of the user's heroes/gear/stats, see `core/services/save-code.service.ts`).
-6. **Deployment:** Firebase Hosting, site name `wos-battle-calculator`. Firestore rules in `firestore.rules`.
+6. **Deployment:** Firebase Hosting, site name `wos-battle-calculator`. Firestore rules for the `saves` collection live in the `plannet-wos` repo now (sole owner/deployer of the shared `tal-coordinator` project's `firestore.rules` — see its README); this repo has no local copy and `firebase deploy` here only ever touches hosting.
 7. **No authentication.** The calculator is a public tool, no login required.
 
 ---
